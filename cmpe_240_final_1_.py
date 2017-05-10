@@ -17,22 +17,127 @@ CONTEXT = 1
 # ADC channel for temperature sensor
 T_CHANNEL = 0
 
+LINE1 = ""
+LINE2 = ""
+CURSOR = -1
+DISPLAY_3_TIMEOUT = 0
+
+
+def get_time():
+    global Cur_Hour, Cur_Min
+    now = datetime.datetime.now()
+    Cur_Hour = now.hour
+    Cur_Min = now.minute
+    return now.strftime('%H:%M')
+
+def get_temp():
+    val = adc.readAdc(T_CHANNEL)
+    #print "value from ADC: ", val
+
+    #print "ADC Result: ", str(val)
+    millivolts = val * (3300.0 / 1024.0)
+    #print str(millivolts)
+    # 10 mv per degree
+    temp_C = ((millivolts - 100.0) / 10.0) - 40.0
+    #print "degree celcius = ", temp_C
+
+    # convert celcius to Fahrenheit
+    temp_F = (temp_C * (9.0 /5.0)) + 32
+    #print "degree Fahrenheit = ", temp_F
+
+    # remove decimal point from millivolts
+    #millivolts = "%d" % millivolts
+    #print str(millivolts)
+
+    # save only decimal place for temperature and vltage readings
+    temp_C = "%.1f" % temp_C
+    temp_F = "%.1f" % temp_F
+
+    #print Temp in celcius and Fahrenheit
+    #print "Temp = ", str(temp_C), " Celcius" 
+    #print "Temp = ", str(temp_F), " Fahrenheit"
+    
+    return temp_C
+
+
+def clear_counters():
+    global Alarm_Set, Alarm_Hour, Alarm_Min
+    global Hour_Count, Min_Count
+    global Buzzer_Activated
+
+    Alarm_Set = False
+    Alarm_Hour = -1
+    Alarm_Min = -1
+    Hour_Count = -1
+    Min_Count = -1
+
+    if(Buzzer_Activated):
+        Buzzer_Activated = False
+        GPIO.output(BUZZER, GPIO.LOW)
+
+
+def get_display_1_lines():
+
+    cur_time = get_time()
+    cur_temp = get_temp()
+
+    line1=" %-7s%-3sF" % (str(cur_time), str(cur_temp))
+    line2="    Set Alarm"
+    
+    return (line1, line2)
+
+def get_display_2_lines(hr, mn):
+    line1="HR:MIN"
+    line2=" %02d:%02d    Set" % (hr, mn)
+    return (line1, line2)
+
+def get_display_3_lines():
+    global Alarm_Hour, Alarm_Min
+    line1=" Alarm Set At:"
+    line2=" %02d:%02d" % (Alarm_Hour, Alarm_Min)
+    return (line1, line2)
+
+def update_display(line1, line2, cur_pos=-1):
+    # clear display
+    LCD.lcd_byte(0x01, LCD_CMD)
+    LCD.lcd_byte(0x01, LCD_CMD)
+    time.sleep(E_DELAY)
+
+    LCD.lcd_string(line1, LCD_LINE_1 + 1)
+    
+    LCD.lcd_string(line2, LCD_LINE_2 + 1)
+
+    if cur_pos >= 0:
+        LCD.lcd_byte(cur_pos, LCD_CMD)
+        LCD.lcd_byte(0x0F, LCD_CMD)
+
 # Threaded callback definition for push button 1
 def button_22_pressed(channel):
-    global CONTEXT
+    global CONTEXT, LINE1, LINE2, CURSOR
+    global Hour_Count, Min_Count
     
     print "Context was ", CONTEXT
     if(CONTEXT == 1):
         CONTEXT = 2
         print " Change to ", CONTEXT
 
-        # display alarm input screen
-        show_display_2()
+        clear_counters()
+
+        cur_time = get_time()
+        str_Hour_Count,str_Min_Count = cur_time.split(':')
+        Hour_Count = int(str_Hour_Count)
+        Min_Count = int(str_Min_Count)
+
+        CURSOR=LCD_LINE_2+2
+        LINE1, LINE2 = get_display_2_lines(Hour_Count, Min_Count)
 
     elif(CONTEXT == 2):
         CONTEXT = 1
-        print " changed to ", CONTEXT
-        show_display_1()
+        # clear all counters
+        clear_counters()
+
+        CURSOR=-1
+        LINE1, LINE2 = get_display_1_lines()
 
 
 # Threaded callback definition for push button 2
@@ -40,196 +145,57 @@ def button_17_pressed(channel):
     global CONTEXT, Hour_Count,Min_Count
     global Alarm_Set, Alarm_Hour, Alarm_Min
     global Buzzer_Activated
+    global LINE1, LINE2, CURSOR, DISPLAY_3_TIMEOUT
 
     print "17 - Context = ", CONTEXT
 
     if(CONTEXT == 1):    # reset alarm if CONTEXT 1.
-        Alarm_Set = False
-        Alarm_Hour = -1
-        Alarm_Min = -1
-        if(Buzzer_Activated):
-            Buzzer_Activated = False
-            GPIO.output(BUZZER, GPIO.LOW)
+        clear_counters()
 
     elif(CONTEXT == 2):   # set the alarm in CONTEXT 2
-        if(Hour_Count == -1):
-            c_time = get_time()
-            str_Hour_Count,str_Min_Count = c_time.split(':')
-            Hour_Count = int(str_Hour_Count)
-            Min_Count = int(str_Min_Count)
-
-        if(Alarm_Hour == -1):
+        if Alarm_Hour == -1:
             Alarm_Hour = Hour_Count
-            # keep cursor blinking at alarm hour input
-            # to indicate use is not done with setting
-            # up the Alarm hour. User will confirm 
-            # Alarm hour with button 17 press. 
-            LCD.lcd_byte(LCD_LINE_2 + 4, LCD_CMD)
-            LCD.lcd_byte(0x0F, LCD_CMD)
-
-        elif(Alarm_Min == -1):
+            CURSOR = LCD_LINE_2 + 5
+            LINE1, LINE2 = get_display_2_lines(Hour_Count, Min_Count)
+        else:
             Alarm_Min = Min_Count
+            CURSOR=-1
+            CONTEXT=3
+            DISPLAY_3_TIMEOUT = 5
             Alarm_Set = True
-            CONTEXT = 3
-            print "changed to ", CONTEXT
-            show_alarm_msg()
-
-            # wait for 3 seconds
-            time.sleep(3)
-            CONTEXT = 1
+            LINE1, LINE2 = get_display_3_lines()
 
 
 def button_27_pressed(channel):
     global CONTEXT, Hour_Count,Min_Count
     global Alarm_Set, Alarm_Hour, Alarm_Min
-    global Buzzer_Activated
+    global Buzzer_Activated, LINE1, LINE2
 
     if(CONTEXT == 2):
-        # This is a counter button.
-        # when this button is pressed make sure 
-        # you still blink the cursor at the same
-        # position where hour/minutes is enteredi.
-
-        # current time (Hour:min) is being displayed 
-        # when this button pressed. So fetch that hour 
-        # and min value and start incrementing from that
-        # value and display the incremented value on
-        # the LCD each time this button 27 is pressed.
-        #done = False
-        if (Hour_Count == -1):
-            c_time = get_time()
-            str_Hour_Count,str_Min_Count = c_time.split(':')
-            Hour_Count = int(str_Hour_Count)
-            Min_Count = int(str_Min_Count)
-
-        if(Alarm_Hour == -1):
+        if Alarm_Hour == -1:
             Hour_Count += 1
-            if(Hour_Count == 24):
+            if Hour_Count == 24:
                 Hour_Count = 0
-            if(Hour_Count < 10):
-                LCD.lcd_string("0", LCD_LINE_2 + 1)
-                LCD.lcd_string(str(Hour_Count), LCD_LINE_2 + 2)
-                LCD.lcd_string(":", LCD_LINE_2 + 3)
-                if(Min_Count < 10):
-                    LCD.lcd_string("0",LCD_LINE_2 + 4)
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 5)
-                else:
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 4)
-
-                LCD.lcd_string("set", LCD_LINE_2 + 11)
-            else:
-                LCD.lcd_string(str(Hour_Count), LCD_LINE_2 +1)
-                LCD.lcd_string(":", LCD_LINE_2 + 3)
-                if(Min_Count < 10):
-                    LCD.lcd_string("0",LCD_LINE_2 + 4)
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 5)
-                else:
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 4)
-
-                LCD.lcd_string("set", LCD_LINE_2 + 11)
-
-            # keep cursor blinking at alarm hour input
-            # to indicate use is not done with setting
-            # up the Alarm hour. User will confirm 
-            # Alarm hour with button 17 press. 
-            LCD.lcd_byte(LCD_LINE_2 + 1, LCD_CMD)
-            LCD.lcd_byte(0x0F, LCD_CMD)
-            
-        elif(Alarm_Min == -1):
+            LINE1, LINE2 = get_display_2_lines(Hour_Count, Min_Count)
+        else:
             Min_Count += 1
-            if(Min_Count == 59):
+            if Min_Count == 60:
                 Min_Count = 0
-            #first show locked in value of alarm hour on the LCD
-            if(Alarm_Hour < 10):
-                LCD.lcd_string("0", LCD_LINE_2 + 1)
-                LCD.lcd_string(str(Alarm_Hour), LCD_LINE_2 + 2)
-                LCD.lcd_string(":", LCD_LINE_2 + 3)
-                if(Min_Count < 10):
-                    LCD.lcd_string("0", LCD_LINE_2 + 4)
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 5)
-                else:
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 4)
-            else:
-                LCD.lcd_string(str(Alarm_Hour), LCD_LINE_2 + 1)
-                LCD.lcd_string(":", LCD_LINE_2 + 3)
-
-                if(Min_Count < 10):
-                    LCD.lcd_string("0", LCD_LINE_2 + 4)
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 5)
-                else:
-                    LCD.lcd_string(str(Min_Count), LCD_LINE_2 + 4)
-            LCD.lcd_string("set", LCD_LINE_2 + 11)
-
-            # keep cursor blinking at alarm minute input
-            # to indicate use is not done with setting
-            # up the Alarm minutes. User will confirm 
-            # Alarm minutes with button 17 press. 
-            LCD.lcd_byte(LCD_LINE_2 + 4, LCD_CMD)
-            LCD.lcd_byte(0x0F, LCD_CMD)
+            LINE1, LINE2 = get_display_2_lines(Hour_Count, Min_Count)
 
 
-def show_display_1(): 
-    global Cur_Hour, Cur_Min
-    global Alarm_Set, Alarm_Hour, Alarm_Min
-    global Buzzer_Activated
+def check_and_fire_alarm():
+    global Alarm_Hour, Alarm_Min, Alarm_Set, Buzzer_Activated
+    if Alarm_Set:
+        cur_time = get_time()
+        str_Hour_Count,str_Min_Count = cur_time.split(':')
+        hr = int(str_Hour_Count)
+        mn = int(str_Min_Count)
 
-    ttime = get_time()
-    temp  = get_temp()
-
-    # clear display
-    LCD.lcd_byte(0x01, LCD_CMD)
-    LCD.lcd_byte(0x01, LCD_CMD)
-    time.sleep(E_DELAY)
-    
-    # display time & temperature on the screen
-    LCD.lcd_string(str(ttime), LCD_LINE_1 + 1)
-    LCD.lcd_string(str(temp), LCD_LINE_1 + 9)
-    LCD.lcd_string("F", LCD_LINE_1 + 12)
-    LCD.lcd_string("Set Alarm >", LCD_LINE_2 + 5)
-    
-    #time.sleep(3)
-
-    # activate buzzer if alarm
-    # is set for current time
-    print "---------------------"
-    print "Alarm set = ", Alarm_Set
-    print "Alarm Hour = ", Alarm_Hour
-    print "Alarm Min = ", Alarm_Min
-    print "Cur_Hour = ", Cur_Hour
-    print "Cur_Min = ", Cur_Min
-    print "---------------------"
-
-    if(Alarm_Set == True):
+        if hr == Alarm_Hour and mn == Alarm_Min:
+            Buzzer_Activated = True
+            GPIO.output(BUZZER, GPIO.HIGH)
         
-        if(Cur_Hour == Alarm_Hour):
-            if(Cur_Min == Alarm_Min):
-                Buzzer_Activated = True
-                GPIO.output(BUZZER, GPIO.HIGH)
-
-
-def show_display_2():
-    # clear display
-    LCD.lcd_byte(0x01, LCD_CMD)
-    LCD.lcd_byte(0x01, LCD_CMD)
-    time.sleep(E_DELAY)
-
-    LCD.lcd_string("HR:MIN", LCD_LINE_1 + 1)
-    ltime = get_time()
-    LCD.lcd_string(str(ltime), LCD_LINE_2 + 1)
-
-    LCD.lcd_string("set" , LCD_LINE_2 + 11)
-    LCD.lcd_byte(LCD_LINE_2 + 1, LCD_CMD)
-    LCD.lcd_byte(0x0F, LCD_CMD)
-
-def show_alarm_msg():
-    LCD.lcd_byte(0x01, LCD_CMD)
-    LCD.lcd_byte(0x01, LCD_CMD)
-    time.sleep(E_DELAY)
-
-    LCD.lcd_string("Alarm set at:", LCD_LINE_1 + 2)
-    LCD.lcd_string(str(Alarm_Hour), LCD_LINE_2 + 1)
-    LCD.lcd_string(":", LCD_LINE_2 + 3)
-    LCD.lcd_string(str(Alarm_Min), LCD_LINE_2 + 4)
 
 def setup():
     GPIO.setwarnings(False)
@@ -255,59 +221,40 @@ def setup():
     GPIO.add_event_detect(22, GPIO.FALLING, callback = button_22_pressed, bouncetime = 500)
     GPIO.add_event_detect(27, GPIO.FALLING, callback = button_27_pressed, bouncetime = 500)
 
+def print_values():
+    global LINE1, LINE2, CURSOR, CONTEXT, DISPLAY_3_TIMEOUT
+    global Alarm_Hour, Alarm_Min, Alarm_Set, Cur_Hour, Cur_Min
+    print "CONTEXT: {c}".format(c=CONTEXT)
+    print "Alarm_Hour: {h}, Alarm_Min: {m}, Alarm_Set: {s}".format(
+            h=Alarm_Hour, m=Alarm_Min, s=Alarm_Set)
+    print "Cur_Hour: {h}, Cur_Min: {m}".format(h=Cur_Hour, m=Cur_Min)
+
 # main
 def main():
     
+    global LINE1, LINE2, CURSOR, CONTEXT, DISPLAY_3_TIMEOUT
     # component setup
     setup()
 
     # Initialise LCD
     LCD.lcd_init()
 
+    LINE1, LINE2 = get_display_1_lines()
+
     while True:
-        if(CONTEXT == 1):
-            show_display_1()
-            time.sleep(2)
-        time.sleep(2)
-                    
+        print_values()
+        check_and_fire_alarm()
+        update_display(LINE1, LINE2, CURSOR)
+        time.sleep(1)
+        if CONTEXT == 1:
+            LINE1, LINE2 = get_display_1_lines()
+            
+        elif CONTEXT == 3:
+            DISPLAY_3_TIMEOUT -= 2
+            if DISPLAY_3_TIMEOUT <= 0:
+                CONTEXT = 1
+                LINE1, LINE2 = get_display_1_lines()
 
-def get_time():
-    global Cur_Hour, Cur_Min
-    now = datetime.datetime.now()
-    Cur_Hour = now.hour
-    Cur_Min = now.minute
-    return now.strftime('%H:%M')
-
-def get_temp():
-        
-        val = adc.readAdc(T_CHANNEL)
-        print "value from ADC: ", val
-
-        #print "ADC Result: ", str(val)
-        millivolts = val * (3300.0 / 1024.0)
-        #print str(millivolts)
-        # 10 mv per degree
-        temp_C = ((millivolts - 100.0) / 10.0) - 40.0
-        print "degree celcius = ", temp_C
-
-        # convert celcius to Fahrenheit
-        temp_F = (temp_C * (9.0 /5.0)) + 32
-        print "degree Fahrenheit = ", temp_F
-
-        # remove decimal point from millivolts
-        #millivolts = "%d" % millivolts
-        #print str(millivolts)
-
-        # save only decimal place for temperature and vltage readings
-        temp_C = "%.1f" % temp_C
-        temp_F = "%.1f" % temp_F
-
-        #print Temp in celcius and Fahrenheit
-        #print "Temp = ", str(temp_C), " Celcius" 
-        #print "Temp = ", str(temp_F), " Fahrenheit"
-        
-        return temp_C
- 
 
 if __name__ == '__main__':
     try:
